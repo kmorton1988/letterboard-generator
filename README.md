@@ -4,7 +4,9 @@ Type a phrase (letters, emoji, uploaded images) and download 3D-printable letter
 
 ## Use it
 
-Open `index.html` in Chrome, Edge, Firefox or Safari. You don't need to install anything. The bundled Google Fonts need an internet connection; system fonts and your own uploaded fonts work offline.
+**Online:** https://kmorton1988.github.io/letterboard-generator/
+
+**Offline:** Open `index.html` in Chrome, Edge, Firefox or Safari. You don't need to install anything. The bundled Google Fonts need an internet connection; system fonts and your own uploaded fonts work offline.
 
 1. Type your phrase. `{1}`, `{2}`… insert uploaded images (a star is preloaded as `{1}` for the demo).
 2. Pick a font and set the letter height, thickness and peg settings.
