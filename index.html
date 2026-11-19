@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Letterboard Letter Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Bebas+Neue&family=Anton&family=Oswald:wght@700&family=Roboto+Condensed:wght@700;900&family=Lilita+One&family=Fredoka:wght@600;700&family=Alfa+Slab+One&family=Rubik:wght@700;900&display=block">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header><h1>Letterboard Letter Generator</h1><span>text / emoji / images &rarr; pegged letters as STL or 3MF</span></header>
+<main>
+<div class="panel controls">
+  <fieldset><legend>Phrase</legend>
+    <textarea id="phrase">HELLO ❤ {1}</textarea>
+    <div class="hint">One tile per character (spaces &amp; new lines are only used for the board preview). Emoji work. <b>{1}</b>, <b>{2}</b>… insert uploaded images.</div>
+    <label><span>Font</span><select id="font">
+      <option value='"Archivo Black"'>Archivo Black</option>
+      <option value='"Anton"'>Anton</option>
+      <option value='"Bebas Neue"'>Bebas Neue</option>
+      <option value='"Oswald"'>Oswald</option>
+      <option value='"Roboto Condensed"'>Roboto Condensed</option>
+      <option value='"Rubik"'>Rubik</option>
+      <option value='"Alfa Slab One"'>Alfa Slab One</option>
+      <option value='"Lilita One"'>Lilita One</option>
+      <option value='"Fredoka"'>Fredoka</option>
+      <option value='"Arial Black", Arial, sans-serif'>Arial Black (system)</option>
+      <option value='Impact, sans-serif'>Impact (system)</option>
+      <option value='sans-serif'>System sans-serif</option>
+    </select></label>
+    <label><span>Weight</span><select id="weight"><option>400</option><option>700</option><option selected>900</option></select></label>
+    <label><span>Own font file (.ttf/.otf)</span><input type="file" id="fontfile" accept=".ttf,.otf,.woff,.woff2"></label>
+    <div class="hint">Chunky fonts work best &ndash; strokes must be wider than the peg.</div>
+  </fieldset>
+
+  <fieldset><legend>Letter</legend>
+    <label><span>Capital letter height (mm)</span><input type="number" id="height" value="25" step="0.5" min="5"></label>
+    <label><span>Emoji / image height (mm)</span><input type="number" id="iconHeight" value="28" step="0.5" min="5"></label>
+    <label><span>Thickness (mm)</span><input type="number" id="thick" value="3" step="0.2" min="0.8"></label>
+  </fieldset>
+
+  <fieldset><legend>Pegs &amp; board</legend>
+    <label><span>Groove spacing (mm)</span><input type="number" id="pitch" value="8" step="0.1" min="2"></label>
+    <label><span>Peg style</span><select id="pegStyle"><option value="tab" selected>Flat tab (slides in)</option><option value="round">Round pin</option></select></label>
+    <label class="tabonly"><span>Tab width, along groove (mm)</span><input type="number" id="tabW" value="2" step="0.1" min="0.5"></label>
+    <label class="tabonly"><span>Tab thickness, across groove (mm)</span><input type="number" id="tabH" value="1" step="0.1" min="0.3"></label>
+    <label class="roundonly"><span>Pin diameter (mm)</span><input type="number" id="pinD" value="1.5" step="0.1" min="0.5"></label>
+    <label><span>Peg length (mm)</span><input type="number" id="pegL" value="4" step="0.5" min="0.5"></label>
+    <label><span>Min. material around peg (mm)</span><input type="number" id="margin" value="0.4" step="0.1" min="0"></label>
+    <label><span>Max pegs per letter</span><input type="number" id="maxPegs" value="2" step="1" min="1" max="6"></label>
+    <label><span>First groove above baseline (mm)</span><input type="number" id="offset" value="3" step="0.25"></label>
+    <div class="hint">Every letter gets its pegs on the same 8&nbsp;mm grid measured from the text baseline, so all letters line up on the board.</div>
+  </fieldset>
+
+  <fieldset><legend>Images / icons</legend>
+    <input type="file" id="imgfile" accept="image/*" multiple>
+    <label><span>Trace using</span><select id="imgMode"><option value="auto">Auto</option><option value="alpha">Transparency</option><option value="dark">Dark pixels</option><option value="light">Light pixels</option></select></label>
+    <label><span>Threshold</span><input type="range" id="thresh" min="1" max="254" value="128"></label>
+    <div class="imgs" id="imgList"></div>
+  </fieldset>
+
+  <fieldset><legend>Output</legend>
+    <label><span>Letters to make</span><select id="which"><option value="all">Every character in phrase</option><option value="unique">Unique characters only</option></select></label>
+    <label><span>Copies</span><input type="number" id="copies" value="1" step="1" min="1"></label>
+    <label><span>Print bed X × Y (mm)</span><span><input type="number" id="bedX" value="220" step="1"> <input type="number" id="bedY" value="220" step="1"></span></label>
+    <label><span>Gap between letters (mm)</span><input type="number" id="gap" value="4" step="0.5" min="1"></label>
+    <div class="hint">Letters are laid out <b>face-down</b> (front on the bed, pegs pointing up) so they print without supports and appear mirrored in the 3D view.</div>
+  </fieldset>
+</div>
+
+<div class="rightcol">
+  <div class="panel view">
+    <h2><span>Board preview (grooves every <span id="pitchLbl">8</span> mm, red = pegs)</span><span id="status"></span></h2>
+    <canvas id="board"></canvas>
+    <ul id="warnings"></ul>
+  </div>
+  <div class="panel view">
+    <h2><span>Print plate (drag to orbit, wheel to zoom)</span></h2>
+    <canvas id="gl"></canvas>
+    <div class="row downloads">
+      <button class="primary" id="dl3mf">Download 3MF (separate objects)</button>
+      <button id="dlstl">Download STL (one plate)</button>
+      <button id="dlzip">Download ZIP (one STL per letter)</button>
+    </div>
+  </div>
+</div>
+</main>
+
+<script src="js/earcut.min.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
