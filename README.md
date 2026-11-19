@@ -19,6 +19,7 @@ Type a phrase (letters, emoji, uploaded images) and download 3D-printable letter
 ## How it works
 
 - Each character is rendered at 20 px/mm, traced into polygons and extruded to the chosen thickness.
+- Detached parts (the dots on i, j, ?, :, ;, ä, ö…, the rings of %) are joined to the main letter by a small connector bar. The bar runs across the shortest gap and is centred on it, and every part gets connected (using the shortest set of bars). Connector width and depth are adjustable. With **Connect detached parts** turned off, the app warns about any part that has no peg of its own.
 - Pegs are placed on rows spaced at the groove pitch (default 8 mm), starting at a fixed height above the text **baseline**. Because every letter uses the same grid, baselines line up on the board.
 - On each row it looks for a spot where the letter is solid enough to hold the peg plus a margin. It then picks up to *Max pegs* spots, spaced far apart for stability.
 - If a glyph has no solid spot on any row (tiny punctuation, thin fonts), it is nudged up or down to the nearest row that works and the app shows a warning. If even that fails, the letter is made without pegs and also warned about.

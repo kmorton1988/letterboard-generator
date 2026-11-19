@@ -13,6 +13,7 @@ function P() {
     height: n('height'), iconHeight: n('iconHeight'), thick: n('thick'),
     pitch: n('pitch'), pegStyle: $('pegStyle').value, tabW: n('tabW'), tabH: n('tabH'), pinD: n('pinD'),
     pegL: n('pegL'), margin: n('margin'), maxPegs: Math.max(1, Math.round(n('maxPegs'))), offset: n('offset'),
+    connect: $('connect').checked, bridgeW: n('bridgeW'), bridgeD: n('bridgeD'),
     imgMode: $('imgMode').value, thresh: n('thresh'),
     which: $('which').value, copies: Math.max(1, Math.round(n('copies'))),
     bedX: n('bedX'), bedY: n('bedY'), gap: n('gap'),
@@ -206,6 +207,86 @@ function maskToShapes(m) {
   return outers.map(o => ({ outer: toMM(o.raw, true), holes: o.holes.map(h => toMM(h.raw, false)) }));
 }
 
+/* ---------------- Connecting detached parts (i, j, ?, ä …) ---------------- */
+// 4-connected components, matching how trace() separates diagonal pixels
+function components(m) {
+  const { mask, w, h } = m, lab = new Int32Array(w * h).fill(-1), comps = [];
+  for (let i0 = 0; i0 < mask.length; i0++) {
+    if (!mask[i0] || lab[i0] >= 0) continue;
+    const id = comps.length, pix = [], border = [], stack = [i0];
+    lab[i0] = id;
+    while (stack.length) {
+      const i = stack.pop(), x = i % w, y = (i / w) | 0;
+      pix.push(i);
+      let edge = false;
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) { edge = true; continue; }
+        const j = ny * w + nx;
+        if (!mask[j]) { edge = true; continue; }
+        if (lab[j] < 0) { lab[j] = id; stack.push(j); }
+      }
+      if (edge) border.push(i);
+    }
+    comps.push({ id, pix, border });
+  }
+  return { comps, lab };
+}
+
+// closest points between two parts; for parallel edges (dot over a stem) the middle of the closest stretch
+function closestPoints(a, b, w) {
+  const sample = c => { const st = Math.max(1, Math.ceil(c.border.length / 1500)); const r = []; for (let k = 0; k < c.border.length; k += st) r.push([c.border[k] % w, (c.border[k] / w) | 0]); return [r, st]; };
+  const [pa, sa] = sample(a), [pb, sb] = sample(b);
+  let dmin = Infinity;
+  for (const [ax, ay] of pa) for (const [bx, by] of pb) { const d = (ax - bx) ** 2 + (ay - by) ** 2; if (d < dmin) dmin = d; }
+  const lim = (Math.sqrt(dmin) + 1.5 * Math.max(sa, sb)) ** 2;
+  let n = 0, Ax = 0, Ay = 0, Bx = 0, By = 0;
+  for (const [ax, ay] of pa) for (const [bx, by] of pb) if ((ax - bx) ** 2 + (ay - by) ** 2 <= lim) { n++; Ax += ax; Ay += ay; Bx += bx; By += by; }
+  return { d: Math.sqrt(dmin), A: [Ax / n + 0.5, Ay / n + 0.5], B: [Bx / n + 0.5, By / n + 0.5] };
+}
+
+function drawCapsule(dst, w, h, A, B, r) {
+  const dx = B[0] - A[0], dy = B[1] - A[1], L2 = dx * dx + dy * dy || 1e-9;
+  const x0 = Math.max(0, Math.floor(Math.min(A[0], B[0]) - r)), x1 = Math.min(w - 1, Math.ceil(Math.max(A[0], B[0]) + r));
+  const y0 = Math.max(0, Math.floor(Math.min(A[1], B[1]) - r)), y1 = Math.min(h - 1, Math.ceil(Math.max(A[1], B[1]) + r));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const px = x + 0.5, py = y + 0.5;
+    const t = Math.max(0, Math.min(1, ((px - A[0]) * dx + (py - A[1]) * dy) / L2));
+    if ((px - A[0] - t * dx) ** 2 + (py - A[1] - t * dy) ** 2 <= r * r) dst[y * w + x] = 1;
+  }
+}
+
+// Joins every detached part to the rest with a bar (minimum spanning tree, starting from the biggest part).
+// Returns {m, parts, bridged}. Full-depth bars are merged into m.mask; shallower ones go to m.bridge.
+function connectParts(m, p) {
+  const { comps, lab } = components(m);
+  const minPx = (0.6 * RES) ** 2;                         // parts smaller than ~0.6×0.6 mm are specks
+  const keep = comps.filter(c => c.pix.length >= minPx).sort((a, b) => b.pix.length - a.pix.length);
+  const mask = m.mask.slice();
+  for (const c of comps) if (c.pix.length < minPx) for (const i of c.pix) mask[i] = 0;
+  const out = { ...m, mask };
+  if (!p.connect || keep.length < 2) return { m: out, parts: keep.length, lab, keep, bridged: 0 };
+  const bridge = new Uint8Array(mask.length);
+  const r = Math.max(0.3, p.bridgeW / 2) * RES;
+  const tree = [keep[0]], rest = keep.slice(1), cache = new Map();
+  const pair = (a, b) => {                                // closest points from part a to part b (cached)
+    const [lo, hi] = a.id < b.id ? [a, b] : [b, a], k = lo.id + ',' + hi.id;
+    if (!cache.has(k)) cache.set(k, closestPoints(lo, hi, m.w));
+    const c = cache.get(k);
+    return a === lo ? c : { d: c.d, A: c.B, B: c.A };
+  };
+  while (rest.length) {
+    let best = null;
+    for (const a of tree) for (const b of rest) { const c = pair(a, b); if (!best || c.d < best.c.d) best = { b, c }; }
+    const { A, B } = best.c, dx = B[0] - A[0], dy = B[1] - A[1], len = Math.hypot(dx, dy) || 1;
+    const ext = r + 1;                                     // push the round ends into both parts
+    drawCapsule(bridge, m.w, m.h, [A[0] - dx / len * ext, A[1] - dy / len * ext], [B[0] + dx / len * ext, B[1] + dy / len * ext], r);
+    tree.push(best.b); rest.splice(rest.indexOf(best.b), 1);
+  }
+  if (p.bridgeD >= p.thick - 1e-6) { for (let i = 0; i < mask.length; i++) mask[i] |= bridge[i]; }
+  else out.bridge = bridge;                                // separate shallow solid, overlapping the parts it joins
+  return { m: out, parts: keep.length, bridged: keep.length - 1 };
+}
+
 /* ---------------- Peg placement ---------------- */
 function findPegs(m, p, shiftMM) {
   const fw = p.pegStyle === 'tab' ? p.tabW : p.pinD;   // footprint width (along groove)
@@ -287,8 +368,9 @@ function extrude(mesh, outer, holes, z0, z1) {
 function rectPoly(cx, cy, w, h) { return [[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx + w / 2, cy + h / 2], [cx - w / 2, cy + h / 2]]; }
 function circlePoly(cx, cy, r, n = 24) { const a = []; for (let i = 0; i < n; i++) { const t = i / n * Math.PI * 2; a.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]); } return a; }
 
-function buildTile(label, m, p) {
-  const t = { label, mask: m, pegs: [], shift: 0, warn: null };
+function buildTile(label, m0, p) {
+  const cp = connectParts(m0, p), m = cp.m;
+  const t = { label, mask: m, pegs: [], shift: 0, warn: null, warn2: null };
   t.shapes = maskToShapes(m);
   t.pegs = findPegs(m, p, 0);
   if (!t.pegs.length) {                 // try nudging the glyph up/down to reach a groove
@@ -297,8 +379,16 @@ function buildTile(label, m, p) {
     if (t.pegs.length) t.warn = `"${label}" has no solid spot on the groove grid – it sits ${Math.abs(t.shift).toFixed(2)} mm ${t.shift > 0 ? 'lower' : 'higher'} than the other letters.`;
     else t.warn = `"${label}": no spot is wide enough for a peg (try a bolder font, bigger letters, smaller pegs or a smaller margin). Generated without pegs.`;
   }
+  if (!p.connect && cp.parts > 1) {      // without bars, any part that has no peg of its own will fall off
+    const loose = cp.keep.filter(c => !t.pegs.some(pg => {
+      const x = Math.floor(pg.x * RES), y = Math.floor(m.baseline - (pg.y - t.shift) * RES);
+      return cp.lab[y * m.w + x] === c.id;
+    })).length;
+    if (loose) t.warn2 = `"${label}" has ${loose} detached part${loose > 1 ? 's' : ''} without a peg – turn on "Connect detached parts".`;
+  }
   const mesh = newMesh();
   for (const s of t.shapes) extrude(mesh, s.outer, s.holes, 0, p.thick);
+  if (m.bridge) for (const s of maskToShapes({ ...m, mask: m.bridge })) extrude(mesh, s.outer, s.holes, p.thick - p.bridgeD, p.thick);
   const overlap = Math.min(0.4, p.thick / 2);
   for (const pg of t.pegs) {
     const poly = p.pegStyle === 'tab' ? rectPoly(pg.x, pg.y, p.tabW, p.tabH) : circlePoly(pg.x, pg.y, p.pinD / 2);
@@ -330,6 +420,7 @@ async function generate() {
   $('pitchLbl').textContent = p.pitch;
   document.querySelectorAll('.tabonly').forEach(e => e.style.display = p.pegStyle === 'tab' ? '' : 'none');
   document.querySelectorAll('.roundonly').forEach(e => e.style.display = p.pegStyle === 'round' ? '' : 'none');
+  document.querySelectorAll('.bridgeopt').forEach(e => e.style.display = p.connect ? '' : 'none');
   $('status').textContent = 'generating…';
   try { await document.fonts.load(`${p.weight} 40px ${p.font}`, 'AHgy'); } catch (e) {}
   const lines = parsePhrase(p.phrase);
@@ -347,6 +438,7 @@ async function generate() {
     const t = m ? buildTile(label, m, p) : null;
     if (!m) warnings.push(`"${label}" rendered empty – skipped.`);
     if (t && t.warn) warnings.push(t.warn);
+    if (t && t.warn2) warnings.push(t.warn2);
     cache.set(key, t);
     return t;
   };
@@ -442,7 +534,10 @@ function drawBoard(layout, p) {
 function maskImage(m) {
   const cv = document.createElement('canvas'); cv.width = m.w; cv.height = m.h;
   const cx = cv.getContext('2d'), id = cx.createImageData(m.w, m.h);
-  for (let i = 0; i < m.mask.length; i++) if (m.mask[i]) { id.data[4 * i] = 245; id.data[4 * i + 1] = 245; id.data[4 * i + 2] = 240; id.data[4 * i + 3] = 255; }
+  for (let i = 0; i < m.mask.length; i++) {
+    const v = m.mask[i] ? 245 : m.bridge && m.bridge[i] ? 190 : 0;   // shallow bars shown a little darker
+    if (v) { id.data[4 * i] = v; id.data[4 * i + 1] = v; id.data[4 * i + 2] = v - 5; id.data[4 * i + 3] = 255; }
+  }
   cx.putImageData(id, 0, 0); return cv;
 }
 
